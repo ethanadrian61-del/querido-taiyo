@@ -48,6 +48,7 @@ footer .big{font-size:28px;color:var(--rose)}
 @media(min-width:620px){.gallery{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:460px){.spotify-form{flex-direction:column}.spotify-form button{width:100%}.poem{font-size:15px}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <main>
@@ -110,12 +111,39 @@ Qué bonito que, entre tantas personas, la vida me haya permitido coincidir cont
 </section>
  
 <section>
-<div class="gallery-top">
-<div><h2>Nuestros recuerdos <span>♡</span></h2><div class="hint">Hasta 10 fotos de ustedes.</div></div>
-<label class="upload">＋ Añadir fotos<input id="photoInput" type="file" accept="image/*" multiple></label>
-</div>
-<div class="gallery" id="gallery"></div>
-<p class="smallprint">Nota: para que las fotos aparezcan también en el enlace público de Taiyō, tendremos que publicarlas junto con la página.</p>
+  <div class="gallery-top">
+    <div>
+      <h2>Nuestros recuerdos <span>♡</span></h2>
+      <div class="hint">Nuestros momentos, siempre juntos.</div>
+    </div>
+  </div>
+
+  <div id="galleryAuth">
+    <p class="hint">Inicia sesión para ver y compartir nuestros recuerdos. ♡</p>
+    <form id="loginForm">
+      <label for="galleryEmail">Correo electrónico</label>
+      <input id="galleryEmail" type="email" autocomplete="username" required>
+
+      <label for="galleryPassword">Contraseña</label>
+      <input id="galleryPassword" type="password" autocomplete="current-password" required>
+
+      <button class="share-btn" type="submit">Iniciar sesión</button>
+      <p id="authMessage" class="smallprint" aria-live="polite"></p>
+    </form>
+  </div>
+
+  <div id="galleryContent" hidden>
+    <p id="galleryWelcome" class="hint"></p>
+    <button id="logoutBtn" class="share-btn" type="button">Cerrar sesión</button>
+
+    <label class="upload">
+      ＋ Añadir fotos
+      <input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+    </label>
+
+    <p id="galleryMessage" class="smallprint" aria-live="polite"></p>
+    <div class="gallery" id="gallery"></div>
+  </div>
 </section>
 
 <footer>
@@ -123,11 +151,19 @@ Qué bonito que, entre tantas personas, la vida me haya permitido coincidir cont
 Dos meses de nosotros.<br>
 Y todavía tantas páginas por escribir.<br>
 <strong>Te amo, Taiyō.</strong>
+<div class="shareline">
+  <button class="share-btn" id="shareBtn">Compartir esta página</button>
+  <p class="smallprint" id="shareMessage">Cuando la página esté publicada, podrás compartir su enlace por WhatsApp o donde quieras.</p>
+</div>
 <p class="smallprint">Un pedacito de mi corazón, para ti.</p>
 </footer>
 </main>
 
 <script>
+ const supabaseClient = window.supabase.createClient(
+  'https://vqevshgtpmclosljjmvl.supabase.co',
+  'sb_publishable_0M4TVzkBkf4jSVC1_3qNTA_vx4XaTUa'
+);
 const startDate=new Date('2026-08-16T00:00:00');
 function updateCounter(){
  const now=new Date();
@@ -138,40 +174,261 @@ function updateCounter(){
  document.getElementById('days').textContent=days;
 }
 updateCounter();
+ 
+const gallery = document.getElementById('gallery');
+const input = document.getElementById('photoInput');
+const loginForm = document.getElementById('loginForm');
+const galleryAuth = document.getElementById('galleryAuth');
+const galleryContent = document.getElementById('galleryContent');
+const authMessage = document.getElementById('authMessage');
+const galleryMessage = document.getElementById('galleryMessage');
+const galleryWelcome = document.getElementById('galleryWelcome');
+const logoutBtn = document.getElementById('logoutBtn');
 
-const gallery=document.getElementById('gallery');
-const input=document.getElementById('photoInput');
-let photos=[];
-function renderGallery(){
- gallery.innerHTML='';
- for(let i=0;i<10;i++){
-  const card=document.createElement('div');
-  card.className='photo';
-  if(photos[i]){
-   const img=document.createElement('img');
-   img.src=photos[i];img.alt='Recuerdo '+(i+1);
-   card.appendChild(img);
-   const del=document.createElement('button');
-   del.textContent='×';del.setAttribute('aria-label','Eliminar foto');
-   del.onclick=()=>{photos.splice(i,1);renderGallery()};
-   card.appendChild(del);
-  }else{
-   card.innerHTML='<div class="placeholder"><b>♡</b>Recuerdo '+(i+1)+'</div>';
+let photos = [];
+let currentUser = null;
+
+async function loadGallery() {
+  galleryMessage.textContent = 'Cargando nuestros recuerdos…';
+  gallery.innerHTML = '';
+
+  const { data, error } = await supabaseClient
+    .storage.from('recuerdos-taiyo')
+    .list('', {
+      limit: 100,
+      sortBy: { column: 'created_at', order: 'asc' }
+    });
+
+  if (error) {
+    galleryMessage.textContent =
+      'No pudimos cargar las fotos. Inténtalo de nuevo.';
+    return;
   }
-  gallery.appendChild(card);
- }
+
+  photos = (data || []).filter(file => file.name && file.id);
+  gallery.innerHTML = '';
+
+  for (let i = 0; i < 10; i++) {
+    const card = document.createElement('div');
+    card.className = 'photo';
+
+    if (photos[i]) {
+      const file = photos[i];
+
+      const { data: signed, error: urlError } =
+        await supabaseClient.storage
+          .from('recuerdos-taiyo')
+          .createSignedUrl(file.name, 3600);
+
+      if (!urlError && signed?.signedUrl) {
+        const img = document.createElement('img');
+        img.src = signed.signedUrl;
+        img.alt = 'Recuerdo ' + (i + 1);
+        card.appendChild(img);
+      }
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = '×';
+      del.setAttribute('aria-label', 'Eliminar foto');
+
+      del.addEventListener('click', async () => {
+        if (!confirm('¿Quieres eliminar este recuerdo para ambos?')) {
+          return;
+        }
+
+        del.disabled = true;
+
+        const { error } = await supabaseClient.storage
+          .from('recuerdos-taiyo')
+          .remove([file.name]);
+
+        if (error) {
+          galleryMessage.textContent =
+            'No se pudo eliminar la foto.';
+          del.disabled = false;
+          return;
+        }
+
+        await loadGallery();
+      });
+
+      card.appendChild(del);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'placeholder';
+      placeholder.innerHTML = '<b>♡</b>Recuerdo ' + (i + 1);
+      card.appendChild(placeholder);
+    }
+
+    gallery.appendChild(card);
+  }
+
+  galleryMessage.textContent =
+    photos.length + ' de 10 recuerdos guardados. ♡';
 }
-input.addEventListener('change',e=>{
- const files=Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/'));
- files.slice(0,10-photos.length).forEach(file=>{
-  const reader=new FileReader();
-  reader.onload=ev=>{photos.push(ev.target.result);renderGallery()};
-  reader.readAsDataURL(file);
- });
- if(files.length>10-photos.length)alert('Puedes agregar hasta 10 fotos.');
- input.value='';
+
+async function showSession() {
+  const { data } = await supabaseClient.auth.getSession();
+  currentUser = data.session?.user || null;
+
+  galleryAuth.hidden = !!currentUser;
+  galleryContent.hidden = !currentUser;
+
+  if (currentUser) {
+    galleryWelcome.textContent = 'Sesión iniciada. ♡';
+    await loadGallery();
+  } else {
+    gallery.innerHTML = '';
+    photos = [];
+  }
+}
+
+loginForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  authMessage.textContent = 'Iniciando sesión…';
+
+  const email =
+    document.getElementById('galleryEmail').value.trim();
+  const password =
+    document.getElementById('galleryPassword').value;
+
+  const { error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) {
+    authMessage.textContent =
+      'No se pudo iniciar sesión. Revisa tu correo y contraseña.';
+    return;
+  }
+
+  loginForm.reset();
+  authMessage.textContent = '';
+  await showSession();
 });
-renderGallery();
+
+logoutBtn.addEventListener('click', async () => {
+  const { error } = await supabaseClient.auth.signOut();
+
+  if (error) {
+    galleryMessage.textContent = 'No se pudo cerrar la sesión.';
+    return;
+  }
+
+  await showSession();
+});
+
+input.addEventListener('change', async event => {
+  const files = Array.from(event.target.files || []);
+  input.value = '';
+
+  if (!currentUser) return;
+
+  const remaining = 10 - photos.length;
+
+  if (remaining <= 0) {
+    galleryMessage.textContent =
+      'Ya tienen 10 fotos. Elimina una para añadir otra.';
+    return;
+  }
+
+  const validFiles = files.filter(file =>
+    ['image/jpeg', 'image/png', 'image/webp'].includes(file.type) &&
+    file.size <= 5 * 1024 * 1024
+  );
+
+  if (validFiles.length < files.length) {
+    galleryMessage.textContent =
+      'Solo se permiten imágenes JPG, PNG o WEBP de hasta 5 MB.';
+  }
+
+  if (validFiles.length > remaining) {
+    galleryMessage.textContent =
+      'Solo caben ' + remaining + ' foto(s) más.';
+  }
+
+  const toUpload = validFiles.slice(0, remaining);
+
+  for (const file of toUpload) {
+    galleryMessage.textContent = 'Guardando ' + file.name + '…';
+
+    const extension = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp'
+    }[file.type];
+
+    const path = Date.now() + '-' +
+      crypto.randomUUID() + '.' + extension;
+
+    const { error } = await supabaseClient.storage
+      .from('recuerdos-taiyo')
+      .upload(path, file, {
+        contentType: file.type,
+        upsert: false
+      });
+
+    if (error) {
+      galleryMessage.textContent =
+        'No se pudo subir una foto. Comprueba tu conexión e inténtalo de nuevo.';
+      return;
+    }
+  }
+
+  await loadGallery();
+});
+
+showSession(); 
+function spotifyId(url) {
+  try {
+    const u = new URL(url);
+
+    if (!['open.spotify.com', 'spotify.link'].some(
+      d => u.hostname === d || u.hostname.endsWith('.' + d)
+    )) {
+      return null;
+    }
+
+    const m = u.pathname.match(
+      /\/(track|album|playlist|episode|show)\/([A-Za-z0-9]+)/
+    );
+
+    return m ? { type: m[1], id: m[2], url: url } : null;
+  } catch {
+    return null;
+  }
+}
+const shareBtn = document.getElementById('shareBtn');
+const shareMessage = document.getElementById('shareMessage');
+
+if (shareBtn && shareMessage) {
+  shareBtn.addEventListener('click', async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Dos meses de ti ♡',
+          text: 'Un pedacito de mi corazón, para Taiyō.',
+          url: window.location.href
+        });
+      } catch (error) {
+        // Si se cancela el menú de compartir, no hacemos cambios.
+      }
+    } else if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        shareMessage.textContent = '¡Enlace copiado! ♡';
+      } catch (error) {
+        shareMessage.textContent =
+          'Copia la dirección de esta página desde el navegador. ♡';
+      }
+    } else {
+      shareMessage.textContent =
+        'Copia la dirección de esta página desde el navegador. ♡';
+    }
+  });
+}
 </script>
 </body>
 </html>
